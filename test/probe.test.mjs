@@ -12,7 +12,7 @@ const GIT_OK_LOG = 'a1b2c3d 2026-02-14\n'
 const GIT_OK_REMOTE = 'origin\thttps://github.com/LucienLL/dsh-session-memo.git (fetch)\n'
 const PKG = JSON.stringify({ name: 'dsh-session-memo', version: '0.1.0' })
 
-/** 按 argv 返回假输出的假 subprocess。 */
+/** 按 argv 返回假输出的假 subprocess。rev-parse 未显式配置时默认返回 cwd（cwd 本身是仓库）。 */
 function fakeSubprocess({ gitResults, gitExitCodes }) {
   return {
     async resolveExecutable(cmd) {
@@ -21,7 +21,15 @@ function fakeSubprocess({ gitResults, gitExitCodes }) {
     },
     spawn(spec) {
       const key = spec.argv.join(' ')
-      const entry = (gitResults || {})[key] ?? { exitCode: 0, out: '' }
+      const explicit = (gitResults || {})[key]
+      let entry
+      if (explicit !== undefined) {
+        entry = explicit
+      } else if (key.includes('rev-parse --show-toplevel')) {
+        entry = { exitCode: 0, out: spec.argv[2] + '\n' }
+      } else {
+        entry = { exitCode: 0, out: '' }
+      }
       const outcome = { exitCode: entry.exitCode ?? 0 }
       return {
         done: Promise.resolve(outcome),
@@ -36,15 +44,21 @@ function fakeSubprocess({ gitResults, gitExitCodes }) {
 
 function makeCtx(overrides = {}) {
   const git = fakeSubprocess(overrides)
+  const reads = []
   return {
+    reads,
     sessions: overrides.liveSession ? { get: () => ({ header: { cwd: overrides.cwd } }) } : { get: () => undefined },
     sessionPersistence: overrides.cwd ? { inspect: async () => ({ meta: { cwd: overrides.cwd } }) } : { inspect: async () => { throw new Error('no such session') } },
     subprocess: git,
     fs: {
-      async resolve(p) { return { key: p } },
+      async resolve(p) { return { key: p, displayPath: p } },
       async readText(t) {
+        reads.push(t.key)
         if (overrides.pkgText !== undefined) return overrides.pkgText
         return PKG
+      },
+      async listDir() {
+        return overrides.dirEntries || []
       },
     },
     fetchOverride: overrides.fetch || null,
@@ -72,6 +86,8 @@ test('probe: 全绿（git ok + pkg ok + npm ok）', async () => {
   const svc = new MemoService(ctx)
   const r = await withFetch(FAKE_REGISTRY_OK, () => svc.probe('s1'))
   assert.equal(r.git.ok, true)
+  assert.equal(r.git.repoPath, 'E:\\repo')
+  assert.equal(r.projectRoot, 'E:\\repo')
   assert.equal(r.git.branch, 'main')
   assert.equal(r.git.ahead, 1)
   assert.equal(r.git.behind, 2)
@@ -87,11 +103,11 @@ test('probe: 全绿（git ok + pkg ok + npm ok）', async () => {
   assert.equal(r.npm.published, true)
 })
 
-test('probe: 非 git 目录（status exit 128）→ not-git，其余仍探测', async () => {
+test('probe: 非 git 目录（rev-parse exit 128 且无子仓库）→ not-git，其余仍探测', async () => {
   const ctx = makeCtx({
     cwd: 'E:\\plain',
     gitResults: {
-      'git -C E:\\plain status --porcelain=v1 -b': { exitCode: 128, err: 'fatal: not a git repository' },
+      'git -C E:\\plain rev-parse --show-toplevel': { exitCode: 128, err: 'fatal: not a git repository' },
     },
   })
   const svc = new MemoService(ctx)
@@ -99,6 +115,75 @@ test('probe: 非 git 目录（status exit 128）→ not-git，其余仍探测', 
   assert.deepEqual(r.git, { ok: false, reason: 'not-git', detail: 'exit-128' })
   assert.equal(r.version.ok, true)
   assert.equal(r.npm.ok, true)
+})
+
+test('probe: cwd 非仓库但子目录有仓库 → 探测子仓库（工作区根场景）', async () => {
+  const ctx = makeCtx({
+    cwd: 'E:\\ws',
+    gitResults: {
+      'git -C E:\\ws rev-parse --show-toplevel': { exitCode: 128, err: 'not a repo' },
+      'git -C E:\\ws\\proj-a rev-parse --show-toplevel': { out: 'E:/ws/proj-a\n' }, // git 常回正斜杠
+      'git -C E:\\ws\\proj-a status --porcelain=v1 -b': { out: '## main...origin/main [behind 1]\n?? x.txt\n' },
+      'git -C E:\\ws\\proj-a log -1 --format=%h %cs': { out: GIT_OK_LOG },
+      'git -C E:\\ws\\proj-a remote -v': { out: GIT_OK_REMOTE },
+    },
+    dirEntries: [
+      { name: 'proj-a', type: 'directory', target: { displayPath: 'E:\\ws\\proj-a' } },
+      { name: 'docs', type: 'directory', target: { displayPath: 'E:\\ws\\docs' } },
+      { name: 'readme.md', type: 'file', target: { displayPath: 'E:\\ws\\readme.md' } },
+    ],
+  })
+  const svc = new MemoService(ctx)
+  const r = await withFetch(FAKE_REGISTRY_OK, () => svc.probe('s7'))
+  assert.equal(r.git.ok, true)
+  assert.equal(r.git.repoPath, 'E:\\ws\\proj-a')
+  assert.equal(r.projectRoot, 'E:\\ws\\proj-a')
+  assert.deepEqual(ctx.reads, ['E:\\ws\\proj-a\\package.json']) // version/npm 跟随仓库根
+  assert.equal(r.git.branch, 'main')
+  assert.equal(r.git.behind, 1)
+  assert.equal(r.git.untracked, 1)
+})
+
+test('probe: 多个子仓库 → 取最近有提交的', async () => {
+  const ctx = makeCtx({
+    cwd: 'E:\\ws2',
+    gitResults: {
+      'git -C E:\\ws2 rev-parse --show-toplevel': { exitCode: 128 },
+      'git -C E:\\ws2\\old rev-parse --show-toplevel': { out: 'E:\\ws2\\old\n' },
+      'git -C E:\\ws2\\new rev-parse --show-toplevel': { out: 'E:\\ws2\\new\n' },
+      'git -C E:\\ws2\\old log -1 --format=%ct': { out: '1700000000\n' },
+      'git -C E:\\ws2\\new log -1 --format=%ct': { out: '1800000000\n' },
+      'git -C E:\\ws2\\new status --porcelain=v1 -b': { out: '## main\n' },
+      'git -C E:\\ws2\\new log -1 --format=%h %cs': { out: GIT_OK_LOG },
+      'git -C E:\\ws2\\new remote -v': { out: '' },
+    },
+    dirEntries: [
+      { name: 'old', type: 'directory', target: { displayPath: 'E:\\ws2\\old' } },
+      { name: 'new', type: 'directory', target: { displayPath: 'E:\\ws2\\new' } },
+      { name: 'node_modules', type: 'directory', target: { displayPath: 'E:\\ws2\\node_modules' } },
+    ],
+  })
+  const svc = new MemoService(ctx)
+  const r = await withFetch(FAKE_REGISTRY_OK, () => svc.probe('s8'))
+  assert.equal(r.git.ok, true)
+  assert.equal(r.git.repoPath, 'E:\\ws2\\new')
+})
+
+test('probe: 子目录无仓库 → not-git（跳过 node_modules）', async () => {
+  const ctx = makeCtx({
+    cwd: 'E:\\ws3',
+    gitResults: {
+      'git -C E:\\ws3 rev-parse --show-toplevel': { exitCode: 128 },
+      'git -C E:\\ws3\\node_modules rev-parse --show-toplevel': { out: 'E:\\ws3\\node_modules\n' },
+    },
+    dirEntries: [
+      { name: 'node_modules', type: 'directory', target: { displayPath: 'E:\\ws3\\node_modules' } },
+    ],
+  })
+  const svc = new MemoService(ctx)
+  const r = await svc.probe('s9')
+  assert.equal(r.git.ok, false)
+  assert.equal(r.git.reason, 'not-git')
 })
 
 test('probe: 无 cwd（live 和 cold 都没有）→ no-workspace 全降级', async () => {
