@@ -88,6 +88,8 @@ test('probe: 全绿（git ok + pkg ok + npm ok）', async () => {
   assert.equal(r.git.ok, true)
   assert.equal(r.git.repoPath, 'E:\\repo')
   assert.equal(r.projectRoot, 'E:\\repo')
+  assert.equal(r.git.repos.length, 1)
+  assert.equal(r.git.repos[0].repoPath, 'E:\\repo')
   assert.equal(r.git.branch, 'main')
   assert.equal(r.git.ahead, 1)
   assert.equal(r.git.behind, 2)
@@ -123,6 +125,7 @@ test('probe: cwd 非仓库但子目录有仓库 → 探测子仓库（工作区�
     gitResults: {
       'git -C E:\\ws rev-parse --show-toplevel': { exitCode: 128, err: 'not a repo' },
       'git -C E:\\ws\\proj-a rev-parse --show-toplevel': { out: 'E:/ws/proj-a\n' }, // git 常回正斜杠
+      'git -C E:\\ws\\docs rev-parse --show-toplevel': { exitCode: 128 },
       'git -C E:\\ws\\proj-a status --porcelain=v1 -b': { out: '## main...origin/main [behind 1]\n?? x.txt\n' },
       'git -C E:\\ws\\proj-a log -1 --format=%h %cs': { out: GIT_OK_LOG },
       'git -C E:\\ws\\proj-a remote -v': { out: GIT_OK_REMOTE },
@@ -139,6 +142,8 @@ test('probe: cwd 非仓库但子目录有仓库 → 探测子仓库（工作区�
   assert.equal(r.git.repoPath, 'E:\\ws\\proj-a')
   assert.equal(r.projectRoot, 'E:\\ws\\proj-a')
   assert.deepEqual(ctx.reads, ['E:\\ws\\proj-a\\package.json']) // version/npm 跟随仓库根
+  assert.equal(r.git.repos.length, 1)
+  assert.equal(r.git.repos[0].repoPath, 'E:\\ws\\proj-a')
   assert.equal(r.git.branch, 'main')
   assert.equal(r.git.behind, 1)
   assert.equal(r.git.untracked, 1)
@@ -167,6 +172,10 @@ test('probe: 多个子仓库 → 取最近有提交的', async () => {
   const r = await withFetch(FAKE_REGISTRY_OK, () => svc.probe('s8'))
   assert.equal(r.git.ok, true)
   assert.equal(r.git.repoPath, 'E:\\ws2\\new')
+  assert.equal(r.git.repos.length, 2) // 全部子仓库都列出
+  assert.equal(r.git.repos[0].repoPath, 'E:\\ws2\\new') // 最近提交在前
+  assert.equal(r.git.repos[1].repoPath, 'E:\\ws2\\old')
+  assert.equal(r.projectRoot, 'E:\\ws2\\new')
 })
 
 test('probe: 子目录无仓库 → not-git（跳过 node_modules）', async () => {
