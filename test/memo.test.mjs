@@ -74,9 +74,10 @@ test('parseBranchLine: 分支名含点', () => {
   assert.equal(r.behind, 3)
 })
 
-test('parseLastCommit: 常规/空', () => {
-  assert.deepEqual(parseLastCommit('a1b2c3d 2026-02-14\n'), { hash: 'a1b2c3d', date: '2026-02-14' })
-  assert.deepEqual(parseLastCommit('a1b2c3d\n'), { hash: 'a1b2c3d', date: null })
+test('parseLastCommit: 常规/空/三列时间戳', () => {
+  assert.deepEqual(parseLastCommit('a1b2c3d 2026-02-14\n'), { hash: 'a1b2c3d', date: '2026-02-14', ts: 0 })
+  assert.deepEqual(parseLastCommit('a1b2c3d\n'), { hash: 'a1b2c3d', date: null, ts: 0 })
+  assert.deepEqual(parseLastCommit('a1b2c3d 2026-02-14 1787681438\n'), { hash: 'a1b2c3d', date: '2026-02-14', ts: 1787681438 })
   assert.equal(parseLastCommit(''), null)
 })
 

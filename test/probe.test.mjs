@@ -8,18 +8,20 @@ import assert from 'node:assert/strict'
 import { MemoService } from '../lib/memo.js'
 
 const GIT_OK_STATUS = '## main...origin/main [ahead 1, behind 2]\n M lib/index.js\n?? new.txt\n'
-const GIT_OK_LOG = 'a1b2c3d 2026-02-14\n'
+const GIT_OK_LOG = 'a1b2c3d 2026-02-14 1700000000\n'
 const GIT_OK_REMOTE = 'origin\thttps://github.com/LucienLL/dsh-session-memo.git (fetch)\n'
 const PKG = JSON.stringify({ name: 'dsh-session-memo', version: '0.1.0' })
 
 /** 按 argv 返回假输出的假 subprocess。rev-parse 未显式配置时默认返回 cwd（cwd 本身是仓库）。 */
 function fakeSubprocess({ gitResults, gitExitCodes }) {
-  return {
+  const sub = {
+    spawnCount: 0,
     async resolveExecutable(cmd) {
       if (cmd !== 'git') throw new Error('unknown executable')
       return 'git'
     },
     spawn(spec) {
+      sub.spawnCount += 1
       const key = spec.argv.join(' ')
       const explicit = (gitResults || {})[key]
       let entry
@@ -40,6 +42,7 @@ function fakeSubprocess({ gitResults, gitExitCodes }) {
       }
     },
   }
+  return sub
 }
 
 function makeCtx(overrides = {}) {
@@ -72,14 +75,14 @@ function withFetch(fake, fn) {
   return fn().finally(() => { globalThis.fetch = real })
 }
 
-const FAKE_REGISTRY_OK = async () => ({ ok: true, json: async () => ({ 'dist-tags': { latest: '0.1.3' } }) })
+const FAKE_REGISTRY_OK = async () => ({ ok: true, json: async () => ({ version: '0.1.3' }) })
 
 test('probe: 全绿（git ok + pkg ok + npm ok）', async () => {
   const ctx = makeCtx({
     cwd: 'E:\\repo',
     gitResults: {
       'git -C E:\\repo status --porcelain=v1 -b': { out: GIT_OK_STATUS },
-      'git -C E:\\repo log -1 --format=%h %cs': { out: GIT_OK_LOG },
+      'git -C E:\\repo log -1 --format=%h %cs %ct': { out: GIT_OK_LOG },
       'git -C E:\\repo remote -v': { out: GIT_OK_REMOTE },
     },
   })
@@ -95,7 +98,7 @@ test('probe: 全绿（git ok + pkg ok + npm ok）', async () => {
   assert.equal(r.git.behind, 2)
   assert.equal(r.git.dirty, 2)
   assert.equal(r.git.untracked, 1)
-  assert.deepEqual(r.git.lastCommit, { hash: 'a1b2c3d', date: '2026-02-14' })
+  assert.deepEqual(r.git.lastCommit, { hash: 'a1b2c3d', date: '2026-02-14', ts: 1700000000 })
   assert.deepEqual(r.git.remote, { name: 'origin', url: 'https://github.com/LucienLL/dsh-session-memo.git' })
   assert.equal(r.version.ok, true)
   assert.equal(r.version.version, '0.1.0')
@@ -130,7 +133,7 @@ test('probe: cwd 非仓库但子目录有仓库 → 探测子仓库（工作区�
       'git -C E:\\ws\\proj-a rev-parse --show-toplevel': { out: 'E:/ws/proj-a\n' }, // git 常回正斜杠
       'git -C E:\\ws\\docs rev-parse --show-toplevel': { exitCode: 128 },
       'git -C E:\\ws\\proj-a status --porcelain=v1 -b': { out: '## main...origin/main [behind 1]\n?? x.txt\n' },
-      'git -C E:\\ws\\proj-a log -1 --format=%h %cs': { out: GIT_OK_LOG },
+      'git -C E:\\ws\\proj-a log -1 --format=%h %cs %ct': { out: GIT_OK_LOG },
       'git -C E:\\ws\\proj-a remote -v': { out: GIT_OK_REMOTE },
     },
     dirEntries: [
@@ -159,10 +162,9 @@ test('probe: 多个子仓库 → 取最近有提交的', async () => {
       'git -C E:\\ws2 rev-parse --show-toplevel': { exitCode: 128 },
       'git -C E:\\ws2\\old rev-parse --show-toplevel': { out: 'E:\\ws2\\old\n' },
       'git -C E:\\ws2\\new rev-parse --show-toplevel': { out: 'E:\\ws2\\new\n' },
-      'git -C E:\\ws2\\old log -1 --format=%ct': { out: '1700000000\n' },
-      'git -C E:\\ws2\\new log -1 --format=%ct': { out: '1800000000\n' },
+      'git -C E:\\ws2\\old log -1 --format=%h %cs %ct': { out: 'o000000 2026-01-01 1700000000\n' },
+      'git -C E:\\ws2\\new log -1 --format=%h %cs %ct': { out: 'n000000 2026-08-01 1800000000\n' },
       'git -C E:\\ws2\\new status --porcelain=v1 -b': { out: '## main\n' },
-      'git -C E:\\ws2\\new log -1 --format=%h %cs': { out: GIT_OK_LOG },
       'git -C E:\\ws2\\new remote -v': { out: '' },
     },
     dirEntries: [
@@ -275,5 +277,26 @@ test('resolveCwd: live 优先，其次 cold', async () => {
   assert.equal(await new MemoService(cold).resolveCwd('x'), 'E:\\cold')
   const none = makeCtx({})
   assert.equal(await new MemoService(none).resolveCwd('x'), null)
+})
+
+test('probe: 同 cwd 缓存命中（切换会话不重复探测），force 绕过', async () => {
+  const ctx = makeCtx({
+    cwd: 'E:\\repo',
+    gitResults: {
+      'git -C E:\\repo status --porcelain=v1 -b': { out: GIT_OK_STATUS },
+      'git -C E:\\repo log -1 --format=%h %cs %ct': { out: GIT_OK_LOG },
+      'git -C E:\\repo remote -v': { out: GIT_OK_REMOTE },
+    },
+  })
+  const svc = new MemoService(ctx)
+  await withFetch(FAKE_REGISTRY_OK, () => svc.probe('a'))
+  const afterFirst = ctx.subprocess.spawnCount
+  const r2 = await withFetch(FAKE_REGISTRY_OK, () => svc.probe('b')) // 不同会话，同 cwd
+  assert.equal(ctx.subprocess.spawnCount, afterFirst) // 缓存命中：零新 git 探测
+  assert.equal(r2.git.repoPath, 'E:\\repo')
+  assert.equal(r2.npm.ok, true)
+  // force=true 绕过缓存重新探测
+  await withFetch(FAKE_REGISTRY_OK, () => svc.probe('c', { force: true }))
+  assert.ok(ctx.subprocess.spawnCount > afterFirst)
 })
 
