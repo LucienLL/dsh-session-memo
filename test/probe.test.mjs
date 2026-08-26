@@ -103,6 +103,9 @@ test('probe: 全绿（git ok + pkg ok + npm ok）', async () => {
   assert.equal(r.npm.latest, '0.1.3')
   assert.equal(r.npm.behind, true)
   assert.equal(r.npm.published, true)
+  assert.equal(r.npm.repos.length, 1)
+  assert.equal(r.npm.repos[0].repoPath, 'E:\\repo')
+  assert.equal(r.npm.repos[0].npm.latest, '0.1.3')
 })
 
 test('probe: 非 git 目录（rev-parse exit 128 且无子仓库）→ not-git，其余仍探测', async () => {
@@ -176,6 +179,9 @@ test('probe: 多个子仓库 → 取最近有提交的', async () => {
   assert.equal(r.git.repos[0].repoPath, 'E:\\ws2\\new') // 最近提交在前
   assert.equal(r.git.repos[1].repoPath, 'E:\\ws2\\old')
   assert.equal(r.projectRoot, 'E:\\ws2\\new')
+  assert.equal(r.npm.repos.length, 2) // npm 与 git 同粒度：每个仓库都有探测
+  assert.equal(r.npm.repos[0].repoPath, 'E:\\ws2\\new')
+  assert.equal(r.npm.repos[1].repoPath, 'E:\\ws2\\old')
 })
 
 test('probe: 子目录无仓库 → not-git（跳过 node_modules）', async () => {
