@@ -300,3 +300,25 @@ test('probe: 同 cwd 缓存命中（切换会话不重复探测），force 绕�
   assert.ok(ctx.subprocess.spawnCount > afterFirst)
 })
 
+test('probe: git 缓存过期只重查 git，npm 缓存未过期不重新 fetch', async () => {
+  const ctx = makeCtx({
+    cwd: 'E:\\repo',
+    gitResults: {
+      'git -C E:\\repo status --porcelain=v1 -b': { out: GIT_OK_STATUS },
+      'git -C E:\\repo log -1 --format=%h %cs %ct': { out: GIT_OK_LOG },
+      'git -C E:\\repo remote -v': { out: GIT_OK_REMOTE },
+    },
+  })
+  const svc = new MemoService(ctx)
+  let fetchCalls = 0
+  const fakeFetch = async () => { fetchCalls += 1; return { ok: true, json: async () => ({ version: '0.1.3' }) } }
+  await withFetch(fakeFetch, () => svc.probe('a'))
+  const spawnAfterFirst = ctx.subprocess.spawnCount
+  svc.gitCache.get('E:\\repo').ts = 0 // 模拟 git 缓存过期
+  await withFetch(fakeFetch, () => svc.probe('b'))
+  assert.ok(ctx.subprocess.spawnCount > spawnAfterFirst) // git 重查（快）
+  assert.equal(fetchCalls, 1) // npm 5min 缓存命中，未重新 fetch
+  await withFetch(fakeFetch, () => svc.probe('c', { force: true }))
+  assert.equal(fetchCalls, 2) // force 重新 fetch
+})
+
