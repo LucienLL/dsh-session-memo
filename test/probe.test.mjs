@@ -51,7 +51,7 @@ function makeCtx(overrides = {}) {
   return {
     reads,
     sessions: overrides.liveSession ? { get: () => ({ header: { cwd: overrides.cwd } }) } : { get: () => undefined },
-    sessionPersistence: overrides.cwd ? { inspect: async () => ({ meta: { cwd: overrides.cwd } }) } : { inspect: async () => { throw new Error('no such session') } },
+    sessionPersistence: overrides.cwd ? { stat: async () => ({ header: { cwd: overrides.cwd } }) } : { stat: async () => { throw new Error('no such session') } },
     subprocess: git,
     fs: {
       async resolve(p) { return { key: p, displayPath: p } },

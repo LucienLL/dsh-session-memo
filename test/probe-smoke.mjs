@@ -11,7 +11,7 @@ const REPO = process.argv[2] || 'E:\\Deepseek\\PluginCreating\\dsh-session-id'
 
 const ctx = {
   sessions: { get: () => undefined },
-  sessionPersistence: { inspect: async () => ({ meta: { cwd: REPO } }) },
+  sessionPersistence: { stat: async () => ({ header: { cwd: REPO } }) },
   subprocess: {
     async resolveExecutable() { return 'git' },
     spawn() {

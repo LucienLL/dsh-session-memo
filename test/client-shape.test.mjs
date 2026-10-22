@@ -29,7 +29,7 @@ for (const s of inject) {
     throw new Error(`inject "${s}" looks like a package name; must be a service name`)
   }
 }
-const expected = ['slots', 'settingsScope']
+const expected = ['slots', 'configForms']
 for (const s of expected) {
   if (!inject.includes(s)) throw new Error(`inject must include "${s}"`)
 }

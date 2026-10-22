@@ -1,6 +1,6 @@
 /**
  * client apply() 契约测试：用假 ctx 执行 bundle 的 apply，验证
- *  - settingsScope.bind 绑定 dsh-session-memo / dsh-session-status 两个 namespace
+ *  - configForms.get 绑定 dsh-session-memo / dsh-session-status 两个 namespace
  *  - slots.inject 注入 conversation.session.header.actions 与 shell.overlay
  *  - 每个注入回调返回合法的槽注册（id = dsh-session-memo + 组件函数）
  * 锁住槽位契约，避免拼错槽名导致面板不出现。
@@ -36,9 +36,9 @@ const fakeScope = {
 }
 
 const fakeCtx = {
-  settingsScope: {
-    bind(spec) {
-      binds.push(spec)
+  configForms: {
+    get(namespace) {
+      binds.push(namespace)
       return fakeScope
     },
   },
@@ -59,8 +59,8 @@ const fakeCtx = {
 
 captured.apply(fakeCtx)
 
-// 1. settingsScope 绑定
-const namespaces = binds.map((b) => b.namespace)
+// 1. configForms 绑定
+const namespaces = binds
 if (namespaces.join(',') !== 'dsh-session-memo,dsh-session-status') {
   throw new Error('unexpected bound namespaces: ' + JSON.stringify(namespaces))
 }
