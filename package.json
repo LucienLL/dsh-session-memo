@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-memo",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DSH Web UI 对话侧边备忘录：GitHub 同步状态（自动探测 git）/ npm 发布状态（自动对比 registry）/ 项目版本 / 手动备忘标签，与 dsh-session-status 状态标签联动",
   "type": "module",
   "main": "lib/index.js",
